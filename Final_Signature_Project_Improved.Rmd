@@ -1,0 +1,377 @@
+---
+title: "Regional Disparities in Cardiovascular & Cerebrovascular Mortality across New York State"
+author: "Eliana Almazan"
+date: "April 20, 2023"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 3
+    number_sections: true
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 10,
+  fig.height = 6,
+  fig.align  = "center"
+)
+
+# NOTE: Update this path to match your local environment
+# setwd("C:/Users/elian/OneDrive/Documents/ALY3015")
+
+library(readxl)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+
+# NOTE: Update this path to match your local file location
+ny_data <- read_excel("D:/ZBook2025/Documents/ALY3015/New York's Mortality Rate and Health Indicators.xlsx")
+
+attach(ny_data)
+```
+
+---
+
+# Executive Summary
+
+This project investigates regional disparities in cardiovascular and cerebrovascular mortality rates across New York State's nine regions using the *Community Health Obesity and Diabetes Related Indicators: 2008–2012* dataset (63 counties). Two analyses were performed:
+
+**Key Findings:**
+
+- **MANOVA** revealed highly significant differences in mortality rates across NY regions (Pillai's trace p = 8.52 × 10⁻⁹), rejecting the null hypothesis of equal means.
+- **Post-hoc Tukey tests** identified Western New York and Hudson Valley as the most significantly different pair for cardiovascular mortality (p = 0.030), and New York City vs. Finger Lakes, Northeastern NY, and Western NY as the most divergent for cerebrovascular mortality (p ≈ 0.0000001).
+- **Multilinear regression** found that region significantly predicted cerebrovascular mortality (R² = 0.671, p = 1.7 × 10⁻⁹), but not cardiovascular mortality (R² = 0.330, p = 0.014 at α = 0.01).
+
+---
+
+# Introduction
+
+Cardiovascular disease is the leading cause of death in the United States. Every year approximately 697,000 people die of heart disease (Centers for Disease Control and Prevention, 2022). Cardiovascular disease encompasses numerous conditions such as heart failure, coronary heart disease, or any other condition affecting the heart and blood vessels. Cerebrovascular disease, or stroke, occurs when the blood supply to the brain is interrupted.
+
+Both of these diseases disproportionately affect low- and middle-income populations (Kelli et al., 2018). Key social determinants associated with both conditions include income level, education, employment status, and broader socioeconomic factors. The relationship between diet, exercise, and cardiovascular and cerebrovascular disease is crucial in maintaining a healthy cardiovascular system and reducing the risk of these conditions.
+
+---
+
+# Dataset
+
+For this project, the dataset *"Community Health Obesity and Diabetes Related Indicators: 2008–2012"* (Health.data.ny.gov, 2021) was used. It comprises 63 New York counties and their regional classifications, along with numerous health indicators including:
+
+- Diabetes and obesity hospitalizations for adults and children
+- Cirrhosis mortality rates
+- Diet and exercise habits
+- Cardiovascular and cerebrovascular mortality rates
+
+The primary research questions were:
+
+1. Are there significant differences in the means of cardiovascular and cerebrovascular mortality rates per 100,000 people across the nine regions of New York?
+2. Is there a **linear** relationship between these mortality rates and diet (age-adjusted percentage of adults eating 5 or more fruits or vegetables per day), lack of exercise (age-adjusted percentage of adults who did not participate in leisure-time physical activity in the last 30 days), and region?
+
+---
+
+# Analysis 1: MANOVA and Factorial ANOVA {.tabset}
+
+## Hypotheses
+
+A factorial MANOVA was conducted using cardiovascular and cerebrovascular mortality rates as dependent variables and NY regions as the independent variable.
+
+| Hypothesis | Statement |
+|:-----------|:----------|
+| **H₀ (main effect)** | The means of cardiovascular and cerebrovascular mortality rates are equal across all regions. |
+| **H₁ (main effect)** | At least one region has a different mean for cardiovascular or cerebrovascular mortality. |
+| **H₀ (interaction)** | There are no interaction effects between cardiovascular and cerebrovascular mortality rates across regions. |
+| **H₁ (interaction)** | There are significant interaction effects across regions. |
+
+The F-test was used at α = 0.05. If p < 0.05, we reject H₀.
+
+## MANOVA Results
+
+```{r manova}
+ny_fit <- manova(
+  cbind(Cardiovascular.Mortality, Cerebrovascular.Mortality) ~ `Region Name`,
+  data = ny_data
+)
+
+summary(ny_fit)
+```
+
+```{r manova-aov}
+summary.aov(ny_fit)
+```
+
+> **Interpretation:** The overall MANOVA was highly significant (p = 8.52 × 10⁻⁹), rejecting the null hypothesis. Individual ANOVAs confirmed significant regional differences in both cardiovascular mortality (p = 0.0115) and cerebrovascular mortality (p = 3.87 × 10⁻¹⁰).
+
+## Effect Size (η²)
+
+Effect size helps quantify *how much* of the variance in mortality rates is explained by region — not just whether the difference is statistically significant.
+
+```{r effect-size}
+# Eta-squared (η²) for each response variable
+# η² = SS_effect / SS_total
+ss_cardio_region   <- 74168
+ss_cardio_residual <- 179147
+eta2_cardio <- ss_cardio_region / (ss_cardio_region + ss_cardio_residual)
+
+ss_cerebro_region   <- 4689.8
+ss_cerebro_residual <- 2464.9
+eta2_cerebro <- ss_cerebro_region / (ss_cerebro_region + ss_cerebro_residual)
+
+data.frame(
+  Outcome     = c("Cardiovascular Mortality", "Cerebrovascular Mortality"),
+  Eta_Squared = round(c(eta2_cardio, eta2_cerebro), 3),
+  Interpretation = c(
+    ifelse(eta2_cardio  > 0.14, "Large effect", ifelse(eta2_cardio  > 0.06, "Medium effect", "Small effect")),
+    ifelse(eta2_cerebro > 0.14, "Large effect", ifelse(eta2_cerebro > 0.06, "Medium effect", "Small effect"))
+  )
+)
+```
+
+> Region explains **`r round(eta2_cardio * 100, 1)`%** of variance in cardiovascular mortality and **`r round(eta2_cerebro * 100, 1)`%** of variance in cerebrovascular mortality — a large effect for cerebrovascular disease.
+
+---
+
+# Analysis 2: Post-Hoc Tukey Tests {.tabset}
+
+## Cardiovascular Mortality
+
+```{r tukey-cardio}
+ny_fit1Tukey <- aov(
+  Cardiovascular.Mortality ~ factor(`Region Name`),
+  data = ny_data
+)
+summary(ny_fit1Tukey)
+TukeyHSD(ny_fit1Tukey)
+```
+
+> **Most significant pair:** Western New York vs. Hudson Valley (p = 0.030). No other pairs reached significance at α = 0.05 for cardiovascular mortality.
+
+## Cerebrovascular Mortality
+
+```{r tukey-cerebro}
+ny_fit2Tukey <- aov(
+  Cerebrovascular.Mortality ~ factor(`Region Name`),
+  data = ny_data
+)
+summary(ny_fit2Tukey)
+TukeyHSD(ny_fit2Tukey)
+```
+
+> **Most significant pairs:** New York City vs. Finger Lakes, Northeastern NY, and Western NY (all p ≈ 0.0000001), indicating that NYC has dramatically lower cerebrovascular mortality than upstate regions.
+
+---
+
+# Visualizations {.tabset}
+
+## Box Plots by Region
+
+```{r boxplots, fig.width=14, fig.height=7}
+# Custom color palette
+region_colors <- c(
+  "#E63946", "#457B9D", "#2A9D8F", "#E9C46A", "#F4A261",
+  "#264653", "#A8DADC", "#6A994E", "#BC4749"
+)
+
+p1 <- ggplot(
+  ny_data,
+  aes(x = `Region Name`, y = Cardiovascular.Mortality, fill = `Region Name`)
+) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.85, width = 0.6) +
+  geom_jitter(width = 0.18, size = 1.8, alpha = 0.55, color = "white") +
+  scale_fill_manual(values = region_colors) +
+  labs(
+    title    = "Cardiovascular Mortality by Region",
+    subtitle = "Per 100,000 people · NY State 2008–2012",
+    x        = NULL,
+    y        = "Mortality Rate (per 100,000)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "none",
+    axis.text.x      = element_text(angle = 35, hjust = 1, size = 8),
+    plot.title       = element_text(face = "bold", size = 12),
+    plot.subtitle    = element_text(color = "gray50", size = 9),
+    panel.grid.minor = element_blank()
+  )
+
+p2 <- ggplot(
+  ny_data,
+  aes(x = `Region Name`, y = Cerebrovascular.Mortality, fill = `Region Name`)
+) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.85, width = 0.6) +
+  geom_jitter(width = 0.18, size = 1.8, alpha = 0.55, color = "white") +
+  scale_fill_manual(values = region_colors) +
+  labs(
+    title    = "Cerebrovascular Mortality by Region",
+    subtitle = "Per 100,000 people · NY State 2008–2012",
+    x        = NULL,
+    y        = "Mortality Rate (per 100,000)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "none",
+    axis.text.x      = element_text(angle = 35, hjust = 1, size = 8),
+    plot.title       = element_text(face = "bold", size = 12),
+    plot.subtitle    = element_text(color = "gray50", size = 9),
+    panel.grid.minor = element_blank()
+  )
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## Regional Means Comparison
+
+```{r means-plot, fig.width=10, fig.height=6}
+# Compute means and CIs per region
+region_summary <- ny_data %>%
+  group_by(`Region Name`) %>%
+  summarise(
+    cardio_mean  = mean(Cardiovascular.Mortality,  na.rm = TRUE),
+    cardio_se    = sd(Cardiovascular.Mortality,    na.rm = TRUE) / sqrt(n()),
+    cerebro_mean = mean(Cerebrovascular.Mortality, na.rm = TRUE),
+    cerebro_se   = sd(Cerebrovascular.Mortality,   na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# Cardiovascular means
+pc <- ggplot(region_summary, aes(x = reorder(`Region Name`, cardio_mean), y = cardio_mean)) +
+  geom_hline(yintercept = mean(region_summary$cardio_mean), linetype = "dashed",
+             color = "#E9C46A", linewidth = 0.8) +
+  geom_segment(aes(xend = reorder(`Region Name`, cardio_mean), y = mean(region_summary$cardio_mean),
+                   yend = cardio_mean), color = "gray75", linewidth = 0.7) +
+  geom_errorbar(aes(ymin = cardio_mean - 1.96 * cardio_se,
+                    ymax = cardio_mean + 1.96 * cardio_se),
+                width = 0.25, color = "#E63946", linewidth = 0.8) +
+  geom_point(size = 4, color = "#E63946") +
+  coord_flip() +
+  labs(title = "Cardiovascular Mortality",
+       subtitle = "Mean ± 95% CI · Dashed = grand mean",
+       x = NULL, y = "Rate per 100,000") +
+  theme_minimal(base_size = 10) +
+  theme(plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
+
+# Cerebrovascular means
+pb <- ggplot(region_summary, aes(x = reorder(`Region Name`, cerebro_mean), y = cerebro_mean)) +
+  geom_hline(yintercept = mean(region_summary$cerebro_mean), linetype = "dashed",
+             color = "#E9C46A", linewidth = 0.8) +
+  geom_segment(aes(xend = reorder(`Region Name`, cerebro_mean), y = mean(region_summary$cerebro_mean),
+                   yend = cerebro_mean), color = "gray75", linewidth = 0.7) +
+  geom_errorbar(aes(ymin = cerebro_mean - 1.96 * cerebro_se,
+                    ymax = cerebro_mean + 1.96 * cerebro_se),
+                width = 0.25, color = "#457B9D", linewidth = 0.8) +
+  geom_point(size = 4, color = "#457B9D") +
+  coord_flip() +
+  labs(title = "Cerebrovascular Mortality",
+       subtitle = "Mean ± 95% CI · Dashed = grand mean",
+       x = NULL, y = "Rate per 100,000") +
+  theme_minimal(base_size = 10) +
+  theme(plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
+
+grid.arrange(pc, pb, ncol = 2)
+```
+
+---
+
+# Analysis 3: Multilinear Regression {.tabset}
+
+## Hypotheses
+
+| Hypothesis | Statement |
+|:-----------|:----------|
+| **H₀** | The percentages of adults eating 5+ fruits/vegetables per day, the percentages of adults with no leisure-time physical activity, and NY regions are **not** predictors of cardiovascular or cerebrovascular mortality rates. |
+| **H₁** | At least one of these predictors significantly predicts cardiovascular or cerebrovascular mortality rates. |
+
+The F-test was used at α = 0.01.
+
+## Model Results
+
+```{r regression}
+cardiocerebrolm <- lm(
+  cbind(Cardiovascular.Mortality, Cerebrovascular.Mortality) ~
+    `Adults eating 5 or more fruits or vegetables per day` +
+    `Adults who did not participate in leisure time physical activity in last 30 days` +
+    factor(`Region Name`),
+  data = ny_data
+)
+
+summary(cardiocerebrolm)
+```
+
+> **Cardiovascular mortality:** The model was not significant at α = 0.01 (p = 0.014, R² = 0.330, Adjusted R² = 0.201). We **fail to reject H₀**. Diet, exercise, and region together were not significant predictors.
+>
+> **Cerebrovascular mortality:** The model was highly significant (p = 1.7 × 10⁻⁹, R² = 0.671, Adjusted R² = 0.607). We **reject H₀**. Region (Hudson Valley, Nassau-Suffolk, and New York City) was a significant predictor.
+
+## Model Diagnostics
+
+Checking assumptions of linearity, normality of residuals, and homoscedasticity for the cerebrovascular model.
+
+```{r diagnostics, fig.width=10, fig.height=8}
+# Fit univariate model for diagnostic plots
+cerebro_lm <- lm(
+  Cerebrovascular.Mortality ~
+    `Adults eating 5 or more fruits or vegetables per day` +
+    `Adults who did not participate in leisure time physical activity in last 30 days` +
+    factor(`Region Name`),
+  data = ny_data
+)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+plot(cerebro_lm, which = 1, main = "Residuals vs Fitted")
+plot(cerebro_lm, which = 2, main = "Normal Q-Q")
+plot(cerebro_lm, which = 3, main = "Scale-Location")
+plot(cerebro_lm, which = 4, main = "Cook's Distance")
+par(mfrow = c(1, 1))
+```
+
+> **Diagnostic notes:** The Q-Q plot assesses normality of residuals (points should follow the diagonal). The Residuals vs. Fitted plot checks for non-linearity or heteroscedasticity (points should be randomly scattered). Cook's Distance identifies influential observations that may disproportionately affect the model.
+
+## Effect Size (R²)
+
+```{r rsquared}
+data.frame(
+  Outcome         = c("Cardiovascular Mortality", "Cerebrovascular Mortality"),
+  R_Squared       = c(0.3296, 0.6708),
+  Adj_R_Squared   = c(0.2006, 0.6074),
+  F_p_value       = c("0.01361", "1.704e-09"),
+  Interpretation  = c(
+    "Moderate fit — region, diet, and exercise explain 33% of variance",
+    "Strong fit — region, diet, and exercise explain 67% of variance"
+  )
+)
+```
+
+---
+
+# Limitations
+
+1. **Masking error in regression:** A variable masking error in R caused the multilinear regression to analyze only 8 of the 9 NY regions, omitting one region's contribution. Future analyses should diagnose and resolve this error using `search()` to check for namespace conflicts.
+
+2. **Broad outcome definition:** The cardiovascular mortality variable encompasses numerous distinct conditions, including congenital, hereditary, and acquired heart disease. Narrowing to a specific cause (e.g., ischemic heart disease) would produce more actionable insights.
+
+3. **Data age:** The dataset covers 2008–2012 and may not reflect current patterns given changes in healthcare access, diet trends, and population demographics over the past decade.
+
+4. **Ecological fallacy:** Analyses are conducted at the county/region level. Individual-level relationships between diet, exercise, and mortality may differ from these aggregate patterns.
+
+---
+
+# References
+
+Bedre, R. (2021, October 1). *MANOVA using R (with examples and code)*. Data science blog. https://www.reneshbedre.com/blog/manova.html
+
+Centers for Disease Control and Prevention. (2022, October 14). *Stroke facts*. https://www.cdc.gov/stroke/facts.htm
+
+Health.data.ny.gov. (2021, February 25). *Community health obesity and diabetes related indicators: 2008–2012*. HealthData.gov. https://healthdata.gov/State/Community-Health-Obesity-and-Diabetes-Related-Indi/95h9-42q2
+
+Kelli, H. M., et al. (2018). Socioeconomic status and cardiovascular outcomes. *Circulation*. https://www.ahajournals.org/doi/10.1161/CIRCULATIONAHA.117.029652
+
+Navarro, D. (2019). *Learning statistics with R: A tutorial for psychology students and other beginners* (version 0.6.1). Chapter 16: Factorial ANOVA. https://learningstatisticswithr.com/book/anova2.html#factorialanovasimple
+
+Zach. (2022, February 23). *How to plot multiple linear regression results in R*. Statology. https://www.statology.org/plot-multiple-linear-regression-in-r/
